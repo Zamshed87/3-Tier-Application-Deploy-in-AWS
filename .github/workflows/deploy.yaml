@@ -12,12 +12,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download build artifact
-        uses: actions/download-artifact@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
         with:
-          name: project-artifact
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
 
-      - name: Deploy
+      - name: Deploy Backend and Frontend from ECR
         run: |
-          echo "🚀 Deploying project..."
-          # Example: Docker or server deployment goes here
+          echo "🚀 Deploying images from ECR..."
+          # Example ECS deploy commands:
+          # aws ecs update-service --cluster my-cluster --service backend-service --force-new-deployment
+          # aws ecs update-service --cluster my-cluster --service frontend-service --force-new-deployment
+          # Or you can use CloudFormation / Terraform for deployment
