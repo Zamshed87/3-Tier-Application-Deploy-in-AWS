@@ -1,1 +1,1 @@
-# TODO: Variables for ecr
+variable "environment" { type = string }

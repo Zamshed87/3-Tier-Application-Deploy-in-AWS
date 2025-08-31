@@ -5,11 +5,7 @@ variable "environment" {
 
 variable "aws_region" {
   type    = string
-  default = "ap-southeast-1"
-}
-
-variable "aws_account_id" {
-  type = string
+  default = "us-east-1"
 }
 
 variable "vpc_cidr" {
@@ -19,35 +15,15 @@ variable "vpc_cidr" {
 
 variable "availability_zones" {
   type    = list(string)
-  default = ["ap-southeast-1a","ap-southeast-1b"]
+  default = ["us-east-1a"]
 }
 
-variable "db_username" {
-  type      = string
-  sensitive = true
-}
-
-variable "db_password" {
-  type      = string
-  sensitive = true
-}
-
-variable "db_name" {
+variable "ami_id" {
   type    = string
-  default = "todoapp"
+  default = "ami-0360c520857e3138f"
 }
 
-variable "rds_instance_class" {
+variable "instance_type" {
   type    = string
-  default = "db.t3.micro"
-}
-
-variable "rds_allocated_storage" {
-  type    = number
-  default = 20
-}
-
-variable "redis_node_type" {
-  type    = string
-  default = "cache.t3.micro"
+  default = "t3.micro"
 }
