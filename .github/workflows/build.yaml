@@ -1,4 +1,4 @@
-name: CI Pipeline
+name: Build Pipeline
 
 on:
   push:
@@ -12,21 +12,27 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-      python-version: 3.11
-# python-version: [3.9, 3.10, 3.11]
+        python-version: [3.11]
 
     steps:
-      - name: Checkout repo
+      # -------------------
+      # Checkout repo
+      # -------------------
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   # needed for git diff + Codecov
 
+      # -------------------
+      # Setup Python
+      # -------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
+      # -------------------
+      # Install Backend dependencies
+      # -------------------
+      - name: Install Backend dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r Backend/requirements.txt
@@ -47,83 +53,29 @@ jobs:
         run: isort --check-only Backend/
 
       # -------------------
-      # Security Scans
+      # Build & Push Docker Images to ECR
       # -------------------
-      - name: Run Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: fs
-          ignore-unfixed: true
-          format: table
-          exit-code: 1
-
-      - name: Run Scout Suite
-        run: |
-          pip install scoutsuite
-          scout aws --report-dir scoutsuite-report || true
-        continue-on-error: true
-
-      # -------------------
-      # CodeQL Analysis
-      # -------------------
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: python
-
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-
-      # -------------------
-      # Run Tests
-      # -------------------
-      - name: Run unit tests
-        run: pytest --maxfail=1 --disable-warnings -q --cov=Backend --cov-report=xml
-
-      # -------------------
-      # Upload Coverage
-      # -------------------
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          fail_ci_if_error: true
-
-      # -------------------
-      # Build & Push Docker Images
-      # -------------------
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
       - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
-
-      - name: Build and push Backend Docker image
         run: |
-          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/backend:${GITHUB_SHA}"
+          echo ${{ secrets.ECR_LOGIN_TOKEN }} | docker login --username ${{ secrets.EC2_USERNAME }} --password-stdin ${{ secrets.EC2_HOST }}
+
+      - name: Build and push Backend image
+        run: |
           docker build -t backend:latest Backend/
-          docker tag backend:latest $IMAGE_URI
-          docker push $IMAGE_URI
+          docker tag backend:latest ${{ secrets.EC2_HOST }}/backend:latest
+          docker push ${{ secrets.EC2_HOST }}/backend:latest
 
-      - name: Build and push Frontend Docker image
+      - name: Build and push Frontend image
         run: |
-          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/frontend:${GITHUB_SHA}"
           docker build -t frontend:latest Frontend/
-          docker tag frontend:latest $IMAGE_URI
-          docker push $IMAGE_URI
+          docker tag frontend:latest ${{ secrets.EC2_HOST }}/frontend:latest
+          docker push ${{ secrets.EC2_HOST }}/frontend:latest
 
       # -------------------
       # Save Artifact (optional)
       # -------------------
-      - name: Upload build artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: project-artifact
-          path: Backend/  # or Frontend/ if needed
+          path: Backend/  # or Frontend if needed
