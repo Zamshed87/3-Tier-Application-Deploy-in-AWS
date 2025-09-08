@@ -20,7 +20,7 @@ This repository contains instructions to deploy the complete Todo application to
 
 ---
 
-## Step 1: Check Free Tier EC2 Instance Types
+## Step 1: Create EC2 & other instances with terraform
 
 ![EC2](images/1-ec2.png)
 
@@ -33,8 +33,6 @@ aws ec2 describe-instance-types   --filters Name=free-tier-eligible,Values=true 
 ---
 
 ## Step 2: SSH Access to EC2
-
-![IAM](images/2-IAM.png)
 
 1. Set the correct permissions for your private key:
 
@@ -94,7 +92,7 @@ cd ~/3-Tier-Application-Deploy-in-AWS/Infrastructure/local
 
 Rebuild and start the containers:
 
-![Containers Running](images/3- Containers_running.png)
+![Containers Running](images/3-containers-running.png)
 
 ```bash
 docker compose --env-file .env.local up --build
@@ -122,6 +120,8 @@ aws --endpoint-url=http://localhost:9324 sqs create-queue --queue-name todo-dlq
 ---
 
 ## Step 8: Verification
+
+![Containers](images/3-containers-running.png)
 
 1. Access the backend API via EC2 public IP:
 
@@ -152,4 +152,3 @@ https://<CLOUDFRONT_DISTRIBUTION_URL>
 ---
 
 **End of Deployment Guide**
-
