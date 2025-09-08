@@ -1,108 +1,71 @@
-version: '3.8'
-
 services:
-  frontend:
-    build:
-      context: ../../todo-frontend
-      dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
-    volumes:
-      - ../../todo-frontend/src:/app/src
-      - /app/node_modules
-    networks:
-      - todo-network
-  api:
-    build:
-      context: ../../todo-backend/api
-      dockerfile: Dockerfile
-    ports:
-      - "3001:3001"
-    env_file:
-      - .env.local
-    volumes:
-      - ../../todo-backend/api:/app
-      - ../../todo-backend/elasticmq.conf:/opt/elasticmq.conf
-    networks:
-      - todo-network
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-      elasticmq:
-        condition: service_started
-  worker:
-    build:
-      context: ../../todo-backend/worker
-      dockerfile: Dockerfile
-    env_file:
-      - .env.local
-    volumes:
-      - ../../todo-backend/worker:/app
-      - ../../todo-backend/elasticmq.conf:/opt/elasticmq.conf
-    networks:
-      - todo-network
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      elasticmq:
-        condition: service_started
-  postgres:
-    image: postgres:14-alpine
+  db:
+    image: postgres:15
+    container_name: local-db
     environment:
-      - POSTGRES_DB=todo_db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: todos
     ports:
       - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ../../todo-backend/api/init.sql:/docker-entrypoint-initdb.d/init.sql
-    networks:
-      - todo-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d todo_db"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
+      retries: 10
+
   redis:
-    image: redis:7-alpine
+    image: redis:7
+    container_name: local-redis
     ports:
       - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - todo-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
+      retries: 10
+
   elasticmq:
-    image: softwaremill/elasticmq-native:latest
+    image: softwaremill/elasticmq-native:1.4.0
+    container_name: local-elasticmq
     ports:
       - "9324:9324"
-      - "9325:9325"
     volumes:
-      - ../../todo-backend/elasticmq.conf:/opt/elasticmq.conf
+      - ./elasticmq.conf:/opt/elasticmq.conf
     command: ["-Dconfig.file=/opt/elasticmq.conf"]
-    networks:
-      - todo-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9324/health"]
+      # TCP check instead of HTTP to avoid localhost issues
+      test: ["CMD-SHELL", "nc -z 0.0.0.0 9324 || exit 1"]
       interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
+      retries: 20
 
-volumes:
-  postgres_data:
-  redis_data:
+  api:
+    build:
+      context: ../../Backend/api
+    container_name: local-api
+    ports:
+      - "${API_PORT}:3001"
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticmq:
+        condition: service_healthy
+    entrypoint: ["/app/wait-for-queues.sh"]
+    command: ["python", "app.py"]
 
-networks:
-  todo-network:
+  worker:
+    build:
+      context: ../../Backend/worker
+    container_name: local-worker
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticmq:
+        condition: service_healthy
+    command: ["python", "worker.py"]

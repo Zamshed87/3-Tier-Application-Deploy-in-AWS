@@ -1,134 +1,92 @@
 import os
-import sys
 import boto3
-import psycopg2
-import redis
-from psycopg2 import sql
-from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text
+import time
+import logging
+from sqlalchemy import create_engine, Column, Integer, String, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from dotenv import load_dotenv
-import json
-import logging
+import redis
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
-)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("config")
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s')
 
-# Load environment variables
-load_dotenv()
+Base = declarative_base()
 
-# Database connection
-DATABASE_URL = os.getenv('DATABASE_URL') or (
-    f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-    f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-)
-
-# Redis configuration
-REDIS_HOST = os.getenv('REDIS_HOST')
-REDIS_PORT = int(os.getenv('REDIS_PORT'))
-
-# SQS configuration
-SQS_REGION = os.getenv('SQS_REGION', 'ap-southeast-1')
-
-# Queue URLs from environment variables
+# SQS config
 QUEUE_URL = os.getenv('SQS_QUEUE_URL')
 DLQ_URL = os.getenv('SQS_DLQ_URL')
 
-# SQLAlchemy setup
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+sqs_config = {
+    'region_name': os.getenv('AWS_REGION', 'us-east-1'),
+    'endpoint_url': QUEUE_URL
+}
 
-# Dependency injection-style DB session
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+if 'elasticmq' in QUEUE_URL:
+    sqs_config.update({
+        'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID', 'x'),
+        'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY', 'x')
+    })
 
-# Initialize all tables
-def init_db():
-    Base.metadata.create_all(bind=engine)
+sqs = boto3.client('sqs', **sqs_config)
 
-# SQS setup
-def ensure_sqs_queue():
-    # Configure SQS client
-    sqs_config = {
-        'region_name': SQS_REGION,
-    }
+# Database
+DB_URI = os.getenv('DATABASE_URI', 'postgresql://postgres:postgres@db:5432/todos')
+engine = create_engine(DB_URI)
+SessionLocal = sessionmaker(bind=engine)
 
-    # Only add endpoint URL and credentials for local development
-    if 'elasticmq' in QUEUE_URL:
-        sqs_config.update({
-            'endpoint_url': QUEUE_URL,
-            'aws_access_key_id': os.getenv('SQS_ACCESS_KEY'),
-            'aws_secret_access_key': os.getenv('SQS_SECRET_KEY')
-        })
+# Redis
+redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'redis'), port=int(os.getenv('REDIS_PORT', 6379)), db=0)
 
-    sqs = boto3.client('sqs', **sqs_config)
+# Models
+class Todo(Base):
+    __tablename__ = "todos"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255))
+    description = Column(Text)
+    status = Column(String(50), default="pending")
 
-    try:
-        # Verify queue access
-        sqs.get_queue_attributes(
-            QueueUrl=QUEUE_URL,
-            AttributeNames=['QueueArn']
-        )
-        logger.info("SQS queue access verified.")
-    except Exception as e:
-        logger.error(f"Error accessing SQS queue: {e}")
-        sys.exit(1)
-
-# DB setup
+# Ensure DB table
 def ensure_db_table():
-    try:
-        conn = psycopg2.connect(
-            host=os.getenv('POSTGRES_HOST'),
-            port=int(os.getenv('POSTGRES_PORT')),
-            database=os.getenv('POSTGRES_DB'),
-            user=os.getenv('POSTGRES_USER'),
-            password=os.getenv('POSTGRES_PASSWORD')
-        )
-        cur = conn.cursor()
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS todos (
-                id SERIAL PRIMARY KEY,
-                title VARCHAR(255) NOT NULL,
-                description TEXT,
-                due_date TIMESTAMP,
-                priority VARCHAR(50) DEFAULT 'medium',
-                status VARCHAR(50) DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.commit()
-        cur.close()
-        conn.close()
-        logger.info("Database table 'todos' ensured.")
-    except Exception as e:
-        logger.error(f"Error ensuring DB table: {e}")
-        sys.exit(1)
+    for i in range(10):
+        try:
+            Base.metadata.create_all(bind=engine)
+            logger.info("Database table 'todos' ensured.")
+            return
+        except Exception as e:
+            logger.warning(f"DB not ready yet ({i+1}/10): {e}")
+            time.sleep(2)
+    logger.error("DB could not be reached. Exiting.")
+    raise Exception("Database not ready")
 
-# Redis setup
+# Ensure Redis
 def ensure_redis():
-    try:
-        r = redis.Redis(
-            host=REDIS_HOST,
-            port=REDIS_PORT
-        )
-        r.ping()
-        logger.info("Redis connection ensured.")
-    except Exception as e:
-        logger.error(f"Error ensuring Redis: {e}")
-        sys.exit(1)
+    for i in range(10):
+        try:
+            redis_client.ping()
+            logger.info("Redis connection ensured.")
+            return
+        except Exception as e:
+            logger.warning(f"Redis not ready yet ({i+1}/10): {e}")
+            time.sleep(2)
+    logger.error("Redis could not be reached. Exiting.")
+    raise Exception("Redis not ready")
+
+# Ensure SQS queue
+def ensure_sqs_queue():
+    for i in range(10):
+        try:
+            sqs.get_queue_attributes(QueueUrl=QUEUE_URL, AttributeNames=['QueueArn'])
+            logger.info("SQS queue access verified.")
+            return
+        except Exception as e:
+            logger.warning(f"SQS not ready yet ({i+1}/10): {e}")
+            time.sleep(2)
+    logger.error("SQS could not be reached. Exiting.")
+    raise Exception("SQS not ready")
 
 def initialize_services():
+    logger.info("Initializing services...")
     ensure_sqs_queue()
     ensure_db_table()
     ensure_redis()
+    logger.info("All services initialized successfully.")

@@ -124,3 +124,8 @@
 **/local/
 **/temp/
 **/tmp/
+*.local
+.env*
+*.local
+.env*
+*.pem
